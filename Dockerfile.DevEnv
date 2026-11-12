@@ -1,0 +1,215 @@
+# docker buildx build --no-cache -f Dockerfile.DevEnv -t devenv:20261110 .
+# docker run --network=host -it --rm --entrypoint /bin/bash --mount type=bind,source="$(pwd)",target=/workspace devenv:20261110
+
+FROM ubuntu:26.04
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG JOBS=16
+ARG BUILD_TYPE=Release
+# C++ standard used for every library built from source in this image
+ARG CXX_STANDARD=20
+WORKDIR /install
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      git \
+      gdb \
+      wget \
+      htop \
+      curl \
+      sudo \
+      mold \
+      cmake \
+      clang \
+      clang-tidy \
+      clang-format \
+      pkg-config \
+      python3 \
+      python3-pip \
+      python3-venv \
+      supervisor \
+      libgoogle-perftools-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# C++ libraries available from Ubuntu.
+# Abseil, protobuf and gRPC are built from source below, so their apt
+# packages must NOT be installed here (mixing Abseil versions breaks linking).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      libgtest-dev \
+      libgmock-dev \
+      libbenchmark-dev \
+      rapidjson-dev \
+      libbsd-dev \
+      uuid-dev \
+      zlib1g-dev \
+      libssl-dev \
+      libc-ares-dev \
+      xz-utils \
+      python3-dev \
+      libbz2-dev \
+      liblzma-dev \
+      libzstd-dev \
+      libicu-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Boost, built from source with b2 (the official release archive, checksum-verified).
+# libbz2/liblzma/libzstd are for Boost.Iostreams, libicu for Boost.Locale/Regex,
+# python3-dev for Boost.Python. MPI-based libraries are skipped.
+ARG BOOST_VERSION=1.92.0
+ARG BOOST_SHA256=ea7b982002cc9dfbe59b0b217b206f470dc75f3de0bb2973d844118934d82411
+RUN curl -fsSL -o /install/boost.tar.xz \
+      https://github.com/boostorg/boost/releases/download/boost-${BOOST_VERSION}/boost-${BOOST_VERSION}-b2-nodocs.tar.xz \
+ && echo "${BOOST_SHA256}  /install/boost.tar.xz" | sha256sum -c - \
+ && mkdir /install/boost \
+ && tar -xJf /install/boost.tar.xz -C /install/boost --strip-components=1 \
+ && cd /install/boost \
+ && ./bootstrap.sh --prefix=/usr/local \
+ && ./b2 install -j${JOBS} -d0 \
+      variant=$([[ "${BUILD_TYPE}" == "Debug" ]] && echo debug || echo release) \
+      cxxstd=${CXX_STANDARD} \
+      link=static,shared \
+      threading=multi \
+      cxxflags=-fPIC \
+      --without-mpi \
+      --without-graph_parallel \
+ && cd / \
+ && rm -rf /install/boost /install/boost.tar.xz \
+ && ldconfig
+
+# Abseil, protobuf and gRPC, built from source as one consistent set.
+# gRPC 1.85.2 was released against protobuf v35.1 and Abseil 20260526.0.
+ARG ABSL_VERSION=20260817.0
+ARG PROTOBUF_VERSION=v35.1
+ARG GRPC_VERSION=v1.85.2
+
+RUN git clone --depth 1 --branch ${ABSL_VERSION} https://github.com/abseil/abseil-cpp.git /install/abseil \
+ && cmake -S /install/abseil -B /install/abseil/build \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DABSL_PROPAGATE_CXX_STD=ON \
+      -DABSL_ENABLE_INSTALL=ON \
+      -DABSL_BUILD_TESTING=OFF \
+ && cmake --build /install/abseil/build -j${JOBS} \
+ && cmake --install /install/abseil/build \
+ && rm -rf /install/abseil
+
+RUN git clone --depth 1 --branch ${PROTOBUF_VERSION} https://github.com/protocolbuffers/protobuf.git /install/protobuf \
+ && cmake -S /install/protobuf -B /install/protobuf/build \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -Dprotobuf_BUILD_TESTS=OFF \
+      -Dprotobuf_LOCAL_DEPENDENCIES_ONLY=ON \
+ && cmake --build /install/protobuf/build -j${JOBS} \
+ && cmake --install /install/protobuf/build \
+ && rm -rf /install/protobuf
+
+RUN git clone --depth 1 --branch ${GRPC_VERSION} https://github.com/grpc/grpc.git /install/grpc \
+ && git -C /install/grpc submodule update --init --depth 1 third_party/re2 \
+ && cmake -S /install/grpc -B /install/grpc/build \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DgRPC_INSTALL=ON \
+      -DgRPC_BUILD_TESTS=OFF \
+      -DgRPC_ABSL_PROVIDER=package \
+      -DgRPC_PROTOBUF_PROVIDER=package \
+      -DgRPC_ZLIB_PROVIDER=package \
+      -DgRPC_CARES_PROVIDER=package \
+      -DgRPC_SSL_PROVIDER=package \
+      -DgRPC_RE2_PROVIDER=module \
+      -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF \
+      -DgRPC_BUILD_GRPC_NODE_PLUGIN=OFF \
+      -DgRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN=OFF \
+      -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF \
+      -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF \
+ && cmake --build /install/grpc/build -j${JOBS} \
+ && cmake --install /install/grpc/build \
+ && rm -rf /install/grpc \
+ && ldconfig
+
+# Aeron C/C++ client and C media driver (not packaged by Ubuntu).
+# The Archive API is off because building it needs Java and Gradle.
+ARG AERON_VERSION=1.54.2
+RUN git clone --depth 1 --branch ${AERON_VERSION} https://github.com/aeron-io/aeron.git /install/aeron \
+ && cmake -S /install/aeron -B /install/aeron/build \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+      -DBUILD_AERON_DRIVER=ON \
+      -DBUILD_AERON_ARCHIVE_API=OFF \
+      -DAERON_TESTS=OFF \
+      -DAERON_UNIT_TESTS=OFF \
+      -DAERON_SYSTEM_TESTS=OFF \
+      -DAERON_BUILD_SAMPLES=OFF \
+      -DAERON_BUILD_DOCUMENTATION=OFF \
+      -DAERON_INSTALL_TARGETS=ON \
+ && cmake --build /install/aeron/build -j${JOBS} \
+ && cmake --install /install/aeron/build \
+ && rm -rf /install/aeron \
+ && ldconfig
+
+# FlatBuffers library and flatc compiler
+ARG FLATBUFFERS_VERSION=v25.12.19-2026-02-06-03fffb2
+RUN git clone --depth 1 --branch ${FLATBUFFERS_VERSION} https://github.com/google/flatbuffers.git /install/flatbuffers \
+ && cmake -S /install/flatbuffers -B /install/flatbuffers/build \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DFLATBUFFERS_CPP_STD=${CXX_STANDARD} \
+      -DFLATBUFFERS_BUILD_TESTS=OFF \
+      -DFLATBUFFERS_BUILD_BENCHMARKS=OFF \
+      -DFLATBUFFERS_INSTALL=ON \
+ && cmake --build /install/flatbuffers/build -j${JOBS} \
+ && cmake --install /install/flatbuffers/build \
+ && rm -rf /install/flatbuffers
+
+# spdlog (compiled library, uses its bundled fmt)
+ARG SPDLOG_VERSION=v1.17.0
+RUN git clone --depth 1 --branch ${SPDLOG_VERSION} https://github.com/gabime/spdlog.git /install/spdlog \
+ && cmake -S /install/spdlog -B /install/spdlog/build \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+      -DSPDLOG_BUILD_PIC=ON \
+      -DSPDLOG_BUILD_EXAMPLE=OFF \
+      -DSPDLOG_BUILD_TESTS=OFF \
+      -DSPDLOG_INSTALL=ON \
+ && cmake --build /install/spdlog/build -j${JOBS} \
+ && cmake --install /install/spdlog/build \
+ && rm -rf /install/spdlog
+
+# eventpp (header-only, not packaged by Ubuntu)
+ARG EVENTPP_VERSION=master
+RUN git clone --depth 1 --branch ${EVENTPP_VERSION} https://github.com/wqking/eventpp.git /install/eventpp \
+ && cmake -S /install/eventpp -B /install/eventpp/build \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+ && cmake --install /install/eventpp/build \
+ && rm -rf /install/eventpp
+
+# Install nodejs
+RUN curl -fsSL https://deb.nodesource.com/setup_26.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/*
+
+
+# Add 'ubuntu' to sudoers file
+RUN echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu \
+ && chmod 0440 /etc/sudoers.d/ubuntu
+
+
+WORKDIR /workspace
+USER ubuntu
+ENV LANG=C.UTF-8
