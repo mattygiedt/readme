@@ -114,7 +114,7 @@ RUN git clone --depth 1 --branch ${PROTOBUF_VERSION} https://github.com/protocol
  && rm -rf /install/protobuf
 
 RUN git clone --depth 1 --branch ${GRPC_VERSION} https://github.com/grpc/grpc.git /install/grpc \
- && git -C /install/grpc submodule update --init --depth 1 third_party/re2 \
+ && git -C /install/grpc submodule update --init --depth 1 third_party/re2 third_party/grpc-proto \
  && cmake -S /install/grpc -B /install/grpc/build \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
