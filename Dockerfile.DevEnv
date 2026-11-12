@@ -32,7 +32,6 @@ RUN apt-get update \
       python3 \
       python3-pip \
       python3-venv \
-      supervisor \
       libgoogle-perftools-dev \
  && rm -rf /var/lib/apt/lists/*
 
@@ -205,11 +204,18 @@ RUN curl -fsSL https://deb.nodesource.com/setup_26.x | bash - \
  && rm -rf /var/lib/apt/lists/*
 
 
-# Add 'ubuntu' to sudoers file
-RUN echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu \
- && chmod 0440 /etc/sudoers.d/ubuntu
-
+# Create a user that matches the host user (name, UID, GID)
+ARG USERNAME=mgiedt
+ARG USER_UID=1000
+ARG USER_GID=1000
+RUN (userdel -r ubuntu || true) \
+ && groupadd --gid ${USER_GID} ${USERNAME} \
+ && useradd --uid ${USER_UID} --gid ${USER_GID} --create-home --shell /bin/bash ${USERNAME} \
+ && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
+ && chmod 0440 /etc/sudoers.d/${USERNAME}
 
 WORKDIR /workspace
-USER ubuntu
+USER ${USERNAME}
+
+# Update tools to use UTF-8
 ENV LANG=C.UTF-8
