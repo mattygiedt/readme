@@ -1,6 +1,20 @@
-# docker buildx build --no-cache -f Dockerfile.DevEnv -t devenv:20261110 .
-# docker buildx build --no-cache -f Dockerfile.DevEnv --build-arg JOBS=$(nproc) -t devenv:20261110 .
-# docker run --network=host -it --rm --entrypoint /bin/bash --mount type=bind,source="$(pwd)",target=/workspace devenv:20261110
+# Development image for experimental: compilers, tools, and every library the
+# project builds against (gRPC, Aeron, FlatBuffers, spdlog, abseil, Boost,
+# prometheus-cpp, OpenTelemetry C++, eventpp, BlazingMQ, QuickFIX, tcmalloc).
+# The Compose stack's BlazingMQ broker runs from it too.
+#
+# Easiest: scripts/devenv.sh image   (passes your user/UID/GID and nproc)
+#
+# By hand, from the project root:
+#   docker buildx build -f docker/Dockerfile.DevEnv --build-arg JOBS=$(nproc) \
+#       --build-arg USERNAME=$(id -un) --build-arg USER_UID=$(id -u) \
+#       --build-arg USER_GID=$(id -g) -t devenv:experimental docker
+#   docker run --network=host --shm-size=1g -it --rm \
+#       --mount type=bind,source="$(pwd)",target=/workspace devenv:experimental
+#   (--shm-size: Aeron keeps its buffers in /dev/shm; the default 64 MiB is too small)
+#
+# Every dependency is pinned (tag or commit), so the image rebuilds the same
+# on any machine. Building from scratch takes a while (gRPC, BDE, BlazingMQ).
 
 FROM ubuntu:26.04
 
@@ -243,9 +257,12 @@ RUN git clone --depth 1 --branch ${OPENTELEMETRY_CPP_VERSION} \
  && cmake --install /install/opentelemetry-cpp/build \
  && rm -rf /install/opentelemetry-cpp
 
-# eventpp (header-only, not packaged by Ubuntu)
-ARG EVENTPP_VERSION=master
-RUN git clone --depth 1 --branch ${EVENTPP_VERSION} https://github.com/wqking/eventpp.git /install/eventpp \
+# eventpp (header-only, not packaged by Ubuntu). Its last release (v0.1.3) is
+# old, so this pins a master commit (2024-12-08).
+ARG EVENTPP_COMMIT=1224dd6c9bd4577d686ac42334fc545997f5ece1
+RUN git init -q /install/eventpp \
+ && git -C /install/eventpp fetch -q --depth 1 https://github.com/wqking/eventpp.git ${EVENTPP_COMMIT} \
+ && git -C /install/eventpp checkout -q FETCH_HEAD \
  && cmake -S /install/eventpp -B /install/eventpp/build \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
       -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
@@ -313,6 +330,26 @@ RUN git clone --depth 1 --branch ${BMQ_VERSION} https://github.com/bloomberg/bla
  && echo /opt/bb/lib64 > /etc/ld.so.conf.d/opt-bb.conf \
  && ldconfig \
  && for f in /opt/bb/bin/*.tsk; do ln -s "$f" "${f%.tsk}"; done
+
+# QuickFIX (FIX protocol engine) with SSL: libquickfix.so in /usr/local/lib,
+# headers in /usr/local/include/quickfix (#include <quickfix/Message.h>), FIX
+# data dictionaries (FIX40..FIX50SP2, FIXT11) in /usr/local/share/quickfix.
+# It installs no CMake package or pkg-config file; find it with find_library
+# and find_path. Built as C++17 (its CMakeLists forces it); its headers also
+# compile cleanly as C++20.
+ARG QUICKFIX_VERSION=v1.16.0
+RUN git clone --depth 1 --branch ${QUICKFIX_VERSION} https://github.com/quickfix/quickfix.git /install/quickfix \
+ && cmake -S /install/quickfix -B /install/quickfix/build -G Ninja \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DHAVE_SSL=ON \
+      -DQUICKFIX_SHARED_LIBS=ON \
+      -DQUICKFIX_EXAMPLES=OFF \
+      -DQUICKFIX_TESTS=OFF \
+ && cmake --build /install/quickfix/build --parallel ${JOBS} \
+ && cmake --install /install/quickfix/build \
+ && ldconfig \
+ && rm -rf /install/quickfix
 
 # Create a user that matches the host user (name, UID, GID)
 ARG USERNAME=mgiedt
