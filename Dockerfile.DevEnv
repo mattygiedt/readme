@@ -51,6 +51,7 @@ RUN apt-get update \
       uuid-dev \
       zlib1g-dev \
       libssl-dev \
+      libjitterentropy3-dev \
       libc-ares-dev \
       xz-utils \
       python3-dev \
