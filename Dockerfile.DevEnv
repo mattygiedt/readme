@@ -262,7 +262,8 @@ RUN git clone --depth 1 --branch ${BMQ_VERSION} https://github.com/bloomberg/bla
  && cp -r /install/blazingmq/src/applications/bmqbrkr/etc /opt/bb/etc/bmqbrkr \
  && rm -rf /install/blazingmq \
  && echo /opt/bb/lib64 > /etc/ld.so.conf.d/opt-bb.conf \
- && ldconfig
+ && ldconfig \
+ && for f in /opt/bb/bin/*.tsk; do ln -s "$f" "${f%.tsk}"; done
 
 # Create a user that matches the host user (name, UID, GID)
 ARG USERNAME=mgiedt
