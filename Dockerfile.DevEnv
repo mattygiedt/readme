@@ -1,4 +1,4 @@
-# docker buildx build --no-cache -f Dockerfile.DevEnv -t devenv:20261110 .
+# docker buildx build --no-cache -f Dockerfile.DevEnv --build-arg JOBS=$(nproc) -t devenv:20261110 .
 # docker run --network=host -it --rm --entrypoint /bin/bash --mount type=bind,source="$(pwd)",target=/workspace devenv:20261110
 
 FROM ubuntu:26.04
@@ -7,7 +7,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ARG JOBS=$(nproc)
+ARG JOBS=16
 ARG BUILD_TYPE=Release
 # C++ standard used for every library built from source in this image
 ARG CXX_STANDARD=20
