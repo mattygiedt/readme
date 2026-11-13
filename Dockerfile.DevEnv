@@ -7,7 +7,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-ARG JOBS=16
+ARG JOBS=$(nproc)
 ARG BUILD_TYPE=Release
 # C++ standard used for every library built from source in this image
 ARG CXX_STANDARD=20
@@ -83,6 +83,7 @@ RUN curl -fsSL -o /install/boost.tar.xz \
 
 # Abseil, protobuf and gRPC, built from source as one consistent set.
 # gRPC 1.85.2 was released against protobuf v35.1 and Abseil 20260526.0.
+# We are using a newer Abseil.
 ARG ABSL_VERSION=20260817.0
 ARG PROTOBUF_VERSION=v35.1
 ARG GRPC_VERSION=v1.85.2
