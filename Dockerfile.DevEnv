@@ -1,3 +1,4 @@
+# docker buildx build --no-cache -f Dockerfile.DevEnv -t devenv:20261110 .
 # docker buildx build --no-cache -f Dockerfile.DevEnv --build-arg JOBS=$(nproc) -t devenv:20261110 .
 # docker run --network=host -it --rm --entrypoint /bin/bash --mount type=bind,source="$(pwd)",target=/workspace devenv:20261110
 
@@ -60,6 +61,7 @@ RUN apt-get update \
       libzstd-dev \
       libicu-dev \
       libfl-dev \
+      libcurl4-openssl-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # Boost, built from source with b2 (the official release archive, checksum-verified).
@@ -194,6 +196,27 @@ RUN git clone --depth 1 --branch ${SPDLOG_VERSION} https://github.com/gabime/spd
  && cmake --build /install/spdlog/build -j${JOBS} \
  && cmake --install /install/spdlog/build \
  && rm -rf /install/spdlog
+
+# prometheus-cpp (static): pull exposes /metrics for Prometheus to scrape,
+# push sends to a Pushgateway (needs libcurl4-openssl-dev, installed above).
+# Civetweb and the other third-party pieces come from its own submodules.
+ARG PROMETHEUS_CPP_VERSION=v1.3.0
+RUN git clone --depth 1 --branch ${PROMETHEUS_CPP_VERSION} --recurse-submodules --shallow-submodules \
+      https://github.com/jupp0r/prometheus-cpp.git /install/prometheus-cpp \
+ && cmake -S /install/prometheus-cpp -B /install/prometheus-cpp/build \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DENABLE_PULL=ON \
+      -DENABLE_PUSH=ON \
+      -DENABLE_COMPRESSION=ON \
+      -DENABLE_TESTING=OFF \
+      -DUSE_THIRDPARTY_LIBRARIES=ON \
+ && cmake --build /install/prometheus-cpp/build -j${JOBS} \
+ && cmake --install /install/prometheus-cpp/build \
+ && rm -rf /install/prometheus-cpp
 
 # eventpp (header-only, not packaged by Ubuntu)
 ARG EVENTPP_VERSION=master
