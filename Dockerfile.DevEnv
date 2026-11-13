@@ -218,6 +218,31 @@ RUN git clone --depth 1 --branch ${PROMETHEUS_CPP_VERSION} --recurse-submodules 
  && cmake --install /install/prometheus-cpp/build \
  && rm -rf /install/prometheus-cpp
 
+# OpenTelemetry C++ (static): API + SDK with the OTLP/HTTP exporter (logs,
+# metrics and traces; uses libcurl and the protobuf built above). Only the
+# two submodules OTLP needs are fetched.
+ARG OPENTELEMETRY_CPP_VERSION=v1.30.0
+RUN git clone --depth 1 --branch ${OPENTELEMETRY_CPP_VERSION} \
+      https://github.com/open-telemetry/opentelemetry-cpp.git /install/opentelemetry-cpp \
+ && git -C /install/opentelemetry-cpp submodule update --init --depth 1 \
+      third_party/opentelemetry-proto third_party/nlohmann-json \
+ && cmake -S /install/opentelemetry-cpp -B /install/opentelemetry-cpp/build \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DCMAKE_CXX_STANDARD=${CXX_STANDARD} \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DBUILD_SHARED_LIBS=OFF \
+      -DWITH_OTLP_HTTP=ON \
+      -DWITH_OTLP_GRPC=OFF \
+      -DBUILD_TESTING=OFF \
+      -DWITH_BENCHMARK=OFF \
+      -DWITH_EXAMPLES=OFF \
+      -DWITH_FUNC_TESTS=OFF \
+      -DOPENTELEMETRY_INSTALL=ON \
+ && cmake --build /install/opentelemetry-cpp/build -j${JOBS} \
+ && cmake --install /install/opentelemetry-cpp/build \
+ && rm -rf /install/opentelemetry-cpp
+
 # eventpp (header-only, not packaged by Ubuntu)
 ARG EVENTPP_VERSION=master
 RUN git clone --depth 1 --branch ${EVENTPP_VERSION} https://github.com/wqking/eventpp.git /install/eventpp \
