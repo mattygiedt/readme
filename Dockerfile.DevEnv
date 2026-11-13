@@ -24,10 +24,13 @@ RUN apt-get update \
       curl \
       sudo \
       mold \
+      flex \
       cmake \
+      bison \
       clang \
       clang-tidy \
       clang-format \
+      ninja-build \
       pkg-config \
       python3 \
       python3-pip \
@@ -55,6 +58,7 @@ RUN apt-get update \
       liblzma-dev \
       libzstd-dev \
       libicu-dev \
+      libfl-dev \
  && rm -rf /var/lib/apt/lists/*
 
 # Boost, built from source with b2 (the official release archive, checksum-verified).
@@ -204,6 +208,61 @@ RUN curl -fsSL https://deb.nodesource.com/setup_26.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
+# BlazingMQ (Bloomberg message queue): broker, tools and C++ client library.
+# Built on Bloomberg's BDE and NTF libraries, all installed under /opt/bb.
+# Versions follow BlazingMQ's own docker/build_deps.sh for the chosen release.
+ARG BDE_VERSION=4.39.0.0
+ARG NTF_VERSION=2.6.13
+ARG BMQ_VERSION=v0.95.28
+ENV PATH=/opt/bb/bin:/opt/bde-tools/bin:${PATH}
+ENV PKG_CONFIG_PATH=/opt/bb/lib64/pkgconfig
+
+# BDE (bde-tools is kept in /opt/bde-tools: its CMake toolchains are needed
+# to build anything against BDE/BlazingMQ)
+RUN git clone --depth 1 --branch ${BDE_VERSION} https://github.com/bloomberg/bde-tools.git /opt/bde-tools \
+ && git clone --depth 1 --branch ${BDE_VERSION} https://github.com/bloomberg/bde.git /install/bde \
+ && cd /install/bde \
+ && eval "$(bbs_build_env -u opt_64_cpp${CXX_STANDARD})" \
+ && bbs_build configure \
+ && bbs_build build -j${JOBS} \
+ && bbs_build --install=/opt/bb --prefix=/ install \
+ && cd / \
+ && rm -rf /install/bde
+ 
+# NTF (Bloomberg networking library used by the broker and client)
+RUN git clone --depth 1 --branch ${NTF_VERSION} https://github.com/bloomberg/ntf-core.git /install/ntf \
+ && cd /install/ntf \
+ && ./configure \
+      --prefix /opt/bb \
+      --without-usage-examples \
+      --without-applications \
+      --without-warnings-as-errors \
+      --with-zlib \
+      --without-zstd \
+      --without-lz4 \
+      --ufid opt_64_cpp${CXX_STANDARD} \
+ && make -j${JOBS} \
+ && make install \
+ && cd / \
+ && rm -rf /install/ntf
+ 
+# BlazingMQ itself. Sample broker config is copied to /opt/bb/etc/bmqbrkr.
+RUN git clone --depth 1 --branch ${BMQ_VERSION} https://github.com/bloomberg/blazingmq.git /install/blazingmq \
+ && cmake -S /install/blazingmq -B /install/blazingmq/build -G Ninja \
+      -DCMAKE_TOOLCHAIN_FILE=/opt/bde-tools/BdeBuildSystem/toolchains/linux/gcc-default.cmake \
+      -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+      -DBDE_BUILD_TARGET_SAFE=ON \
+      -DBDE_BUILD_TARGET_64=ON \
+      -DBDE_BUILD_TARGET_CPP${CXX_STANDARD}=ON \
+      -DCMAKE_PREFIX_PATH="/opt/bde-tools/BdeBuildSystem;/opt/bb" \
+      -DCMAKE_INSTALL_LIBDIR=lib64 \
+ && cmake --build /install/blazingmq/build --parallel ${JOBS} \
+ && cmake --install /install/blazingmq/build --prefix /opt/bb \
+ && mkdir -p /opt/bb/etc \
+ && cp -r /install/blazingmq/src/applications/bmqbrkr/etc /opt/bb/etc/bmqbrkr \
+ && rm -rf /install/blazingmq \
+ && echo /opt/bb/lib64 > /etc/ld.so.conf.d/opt-bb.conf \
+ && ldconfig
 
 # Create a user that matches the host user (name, UID, GID)
 ARG USERNAME=mgiedt
